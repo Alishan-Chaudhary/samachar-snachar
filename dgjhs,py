@@ -1,0 +1,86 @@
+import feedparser
+import os
+import pandas as pd
+
+# Folder for saving files
+folder_path = "./news_data"
+os.makedirs(folder_path, exist_ok=True)
+
+# RSS URLs
+site_list = ["http://feeds.bbci.co.uk/news/world/rss.xml"]
+
+for url in site_list:
+    feed = feedparser.parse(url)
+    site = feed.feed.title
+
+    # Map feed title to site name
+    if site == "BBC News":
+        site_name = "BBC News"
+    elif site == "World":
+        site_name = "The Washington Post"
+    elif site == "NYT > Top Stories":
+        site_name = "The New York Times"
+    elif site == "CNN.com - RSS Channel - App International Edition":
+        site_name = "CNN"
+    elif site == "World news | The Guardian":
+        site_name = "The Guardian"
+    elif site == "Home - CBSNews.com":
+        site_name = "CBS News"
+    else:
+        site_name = site
+
+    file_path = os.path.join(folder_path, f"{site_name}.csv")
+
+    # --- Step 1: Parse new feed data ---
+    entries = []
+    for entry in feed.entries:
+        guid = entry.get("id") or entry.get("link")  # use GUID or link as unique key
+        entries.append({
+            "GUID": guid,
+            "DATE": entry.get("published"),
+            "TITLE": entry.get("title"),
+            "SUMMARY": entry.get("summary", "")
+        })
+
+    new_data = pd.DataFrame(entries)
+
+    # --- Step 2: Load existing file if it exists ---
+    if os.path.exists(file_path):
+        existing = pd.read_csv(file_path)
+
+        # Keep a separate list of known GUIDs (in memory only)
+        existing_guids = []
+
+        # Optionally: store them in a hidden side file (not user-facing)
+        guid_file = file_path.replace(".csv", "_guids.txt")
+        if os.path.exists(guid_file):
+            with open(guid_file, "r", encoding="utf-8") as f:
+                existing_guids = [line.strip() for line in f if line.strip()]
+
+        # Filter out already-seen items
+        new_unique = new_data[~new_data["GUID"].isin(existing_guids)]
+
+        if not new_unique.empty:
+            # Append visible columns only
+            to_save = new_unique[["DATE", "TITLE", "SUMMARY"]]
+            pd.concat([existing, to_save], ignore_index=True).to_csv(file_path, index=False)
+
+            # Update the GUID list file
+            new_guids = new_unique["GUID"].dropna().tolist()
+            with open(guid_file, "a", encoding="utf-8") as f:
+                for g in new_guids:
+                    f.write(g + "\n")
+
+            print(f"✅ Added {len(new_unique)} new items to {site_name}")
+        else:
+            print(f"⏩ No new items for {site_name}")
+
+    else:
+        # --- First time: create CSV + GUID file ---
+        new_data[["DATE", "TITLE", "SUMMARY"]].to_csv(file_path, index=False)
+        guid_file = file_path.replace(".csv", "_guids.txt")
+        with open(guid_file, "w", encoding="utf-8") as f:
+            for g in new_data["GUID"].dropna().tolist():
+                f.write(g + "\n")
+
+        print(f"📁 Created new file for {site_name}")
